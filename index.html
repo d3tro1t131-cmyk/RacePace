@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>RETRO RACER — TG MINI APP</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{margin:0;width:100%;height:100%;background:#02030b;color:#fff;font-family:monospace;overflow:hidden;}
+body{padding:4px;display:flex;justify-content:center;align-items:center;background:radial-gradient(circle at 50% 0,#101a3f 0%,#050714 50%,#010206 100%);}
+
+.arcade{width:min(1000px,100%);height:100%;max-height:750px;overflow:hidden;border:3px solid #1a2342;border-radius:16px;background:#070a18;box-shadow:0 0 40px #0a256ff5;display:flex;flex-direction:column;}
+
+.marquee{padding:8px;text-align:center;background:#070a20;border-bottom:3px solid #141c38;}
+.marquee h1{margin:0;font-size:clamp(20px,3.5vw,36px);color:#ffd52c;text-shadow:2px 2px #e52225;}
+.sub{color:#20eaff;font-size:clamp(9px,1.5vw,13px);font-weight:bold;}
+
+.screen-wrapper{flex-grow:1;position:relative;background:#050712;overflow:hidden;display:flex;justify-content:center;align-items:center;}
+canvas{position:absolute;inset:0;width:100%;height:100%;}
+
+/* HUD */
+.hud{position:absolute;z-index:10;top:8px;left:8px;right:8px;display:flex;justify-content:space-between;pointer-events:none;}
+.hudbox{padding:4px 10px;border:2px solid #20e8ff;border-radius:5px;text-align:center;background:#020922dd;box-shadow:0 0 8px #00d9ff44;}
+.hudbox small{display:block;color:#20e8ff;font-size:7px;}
+.hudbox b{display:block;font-size:14px;}
+
+/* CONTROLS (SEMITRANSPARENT) */
+.controls{position:absolute;z-index:20;inset:0;display:flex;justify-content:space-between;align-items:flex-end;padding:15px;pointer-events:none;}
+.group{display:flex;gap:10px;pointer-events:auto;}
+.ctrl-btn{width:65px;height:65px;border:2px solid rgba(255,255,255,.4);border-radius:50%;background:rgba(255,255,255,.12);color:#fff;font-size:22px;display:flex;justify-content:center;align-items:center;backdrop-filter:blur(4px);user-select:none;box-shadow:0 0 10px rgba(0,0,0,.5);cursor:pointer;}
+.ctrl-btn:active{background:rgba(32,232,255,.35);border-color:#20e8ff;}
+.ctrl-btn.gas{background:rgba(0,255,100,.15);border-color:rgba(0,255,100,.4);}
+.ctrl-btn.brake{background:rgba(255,50,50,.15);border-color:rgba(255,50,50,.4);}
+
+/* OVERLAY */
+.overlay{position:absolute;z-index:30;inset:0;display:flex;align-items:center;justify-content:center;background:#02030be8;}
+.overlay.hidden{display:none;}
+.card{width:min(380px,90%);padding:18px;border:3px solid #20e8ff;border-radius:12px;background:#060a1bef;text-align:center;box-shadow:0 0 30px #00d9ff55;}
+.card h2{margin:0 0 8px;color:#ffd42a;font-size:22px;text-shadow:2px 2px #f22;}
+.card p{color:#b8eaff;font-size:12px;line-height:1.4;}
+.start-btn{margin-top:12px;width:100%;height:45px;border:2px solid #20e8ff;border-radius:6px;background:#0f2766;color:#fff;font:bold 14px monospace;cursor:pointer;}
+
+.bottom{padding:5px;text-align:center;border-top:2px solid #111a3b;color:#ffd42a;font-size:12px;background:#050716;}
+</style>
+</head>
+<body>
+<div class="arcade">
+  <header class="marquee">
+    <h1>RETRO RACER <span>360</span></h1>
+    <div class="sub">CHAMPIONSHIP CIRCUIT</div>
+  </header>
+
+  <div class="screen-wrapper">
+    <div style="position:relative;width:100%;height:100%;" id="gameArea">
+      <canvas id="trackCanvas"></canvas>
+      <canvas id="carCanvas"></canvas>
+
+      <div class="hud">
+        <div class="hudbox"><small>SPEED</small><b id="hudSpeed">0</b></div>
+        <div class="hudbox"><small>LAP</small><b id="hudLap">1/3</b></div>
+        <div class="hudbox"><small>TIME</small><b id="hudTime">00.00</b></div>
+        <div class="hudbox"><small>BEST</small><b id="hudBest">--.--</b></div>
+      </div>
+
+      <!-- SEMITRANSPARENT CONTROLS -->
+      <div class="controls">
+        <div class="group">
+          <div class="ctrl-btn" id="btnLeft">◀</div>
+          <div class="ctrl-btn" id="btnRight">▶</div>
+        </div>
+        <div class="group">
+          <div class="ctrl-btn brake" id="btnBrake">■</div>
+          <div class="ctrl-btn gas" id="btnGas">▲</div>
+        </div>
+      </div>
+
+      <div class="overlay" id="overlay">
+        <div class="card">
+          <h2 id="title">RETRO RACER</h2>
+          <p id="message">Пройди 3 круга на лучшее время.<br><br>Управление: слева повороты, справа газ/тормоз.</p>
+          <button class="start-btn" id="startBtn">СТАРТ ГОНКИ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="bottom">
+    🏆 ЛУЧШИЙ КРУГ: <span id="bestLap">--.--</span> | ЛУЧШАЯ ГОНКА: <span id="bestRace">--.--</span>
+  </footer>
+</div>
+
+<script>
+"use strict";
+const tg = window.Telegram.WebApp;
+tg.ready(); tg.expand();
+
+const $ = id => document.getElementById(id);
+const trackCanvas = $("trackCanvas"), carCanvas = $("carCanvas");
+const tctx = trackCanvas.getContext("2d"), cctx = carCanvas.getContext("2d");
+
+let width = 800, height = 500;
+function resize() {
+  const rect = carCanvas.getBoundingClientRect();
+  width = rect.width || 800; height = rect.height || 500;
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  [trackCanvas, carCanvas].forEach(c => {
+    c.width = Math.floor(width * ratio); c.height = Math.floor(height * ratio);
+    c.style.width = width + "px"; c.style.height = height + "px";
+  });
+  tctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  cctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  drawStaticTrack();
+}
+window.addEventListener("resize", resize);
+
+// Track (Closed Loop Points)
+const trackPoints = [
+  {x: 400, y: 400}, {x: 200, y: 380}, {x: 100, y: 250}, {x: 150, y: 120},
+  {x: 350, y: 80},  {x: 600, y: 100}, {x: 700, y: 220}, {x: 650, y: 380}
+];
+
+// Game State
+let running = false, paused = false;
+let car = { x: 400, y: 400, angle: -Math.PI/2, speed: 0, maxSpeed: 6.5, accel: 0.12, friction: 0.04, steer: 0.05 };
+let keys = { left: false, right: false, gas: false, brake: false };
+
+let currentLap = 1, lapStartTime = 0, raceStartTime = 0, currentLapTime = 0;
+let lastLapTimes = [], bestLapTime = Number(localStorage.getItem("retroBestLap") || 0);
+let bestRaceTime = Number(localStorage.getItem("retroBestRace") || 0);
+
+$("bestLap").textContent = bestLapTime ? bestLapTime.toFixed(2) + "s" : "--.--";
+$("bestRace").textContent = bestRaceTime ? bestRaceTime.toFixed(2) + "s" : "--.--";
+
+// Draw Track Background Once
+function drawStaticTrack() {
+  tctx.fillStyle = "#0c1b0a"; tctx.fillRect(0, 0, width, height);
+  // Grass grid/details
+  tctx.strokeStyle = "#10260e"; tctx.lineWidth = 1;
+  for(let i=0; i<width; i+=40) { tctx.beginPath(); tctx.moveTo(i,0); tctx.lineTo(i,height); tctx.stroke(); }
+
+  // Draw Road outer & inner
+  tctx.save();
+  tctx.scale(width/800, height/500);
+  
+  tctx.beginPath();
+  tctx.moveTo(trackPoints[0].x, trackPoints[0].y);
+  for(let p of trackPoints) tctx.lineTo(p.x, p.y);
+  tctx.closePath();
+  tctx.strokeStyle = "#ff4444"; tctx.lineWidth = 90; tctx.lineJoin = "round"; tctx.stroke();
+  
+  tctx.strokeStyle = "#22252b"; tctx.lineWidth = 74; tctx.stroke();
+  
+  // Finish line
+  tctx.strokeStyle = "#fff"; tctx.lineWidth = 6; tctx.setLineDash([8,8]);
+  tctx.beginPath(); tctx.moveTo(400, 360); tctx.lineTo(400, 440); tctx.stroke();
+  tctx.restore();
+}
+
+// Check if car is on road (Simplified collision based on distance to center spline)
+function isOnRoad(x, y) {
+  // Approximate check for circular track layout
+  let cx = width * 0.4, cy = height * 0.5;
+  let dist = Math.hypot(x - width*0.42, y - height*0.48);
+  // Main oval bounds
+  return (dist > 90 && dist < 240);
+}
+
+function startRace() {
+  car.x = width * 0.5; car.y = height * 0.8; car.angle = -Math.PI/2; car.speed = 0;
+  currentLap = 1; lastLapTimes = [];
+  raceStartTime = performance.now();
+  lapStartTime = raceStartTime;
+  running = true; paused = false;
+  $("overlay").classList.add("hidden");
+}
+
+$("startBtn").addEventListener("click", startRace);
+
+// Controls Mapping
+const bindBtn = (id, key) => {
+  const el = $(id);
+  el.addEventListener("pointerdown", e => { e.preventDefault(); keys[key] = true; });
+  el.addEventListener("pointerup", e => { e.preventDefault(); keys[key] = false; });
+  el.addEventListener("pointerleave", e => { keys[key] = false; });
+};
+bindBtn("btnLeft", "left"); bindBtn("btnRight", "right");
+bindBtn("btnGas", "gas"); bindBtn("btnBrake", "brake");
+
+function update(dt) {
+  if (!running || paused) return;
+
+  // Steering
+  if (keys.left) car.angle -= car.steer * (car.speed / car.maxSpeed);
+  if (keys.right) car.angle += car.steer * (car.speed / car.maxSpeed);
+
+  // Gas / Brake
+  if (keys.gas) car.speed = Math.min(car.maxSpeed, car.speed + car.accel);
+  else if (keys.brake) car.speed = Math.max(-2, car.speed - car.accel * 1.5);
+  else car.speed = Math.max(0, car.speed - car.friction);
+
+  // Offroad penalty
+  let scaleX = width/800, scaleY = height/500;
+  let testX = car.x / scaleX, testY = car.y / scaleY;
+  let onRoad = isOnRoad(car.x, car.y);
+  let currentMax = onRoad ? car.maxSpeed : 2.5;
+  if (car.speed > currentMax) car.speed -= 0.2;
+
+  // Move
+  car.x += Math.cos(car.angle) * car.speed;
+  car.y += Math.sin(car.angle) * car.speed;
+
+  // Screen bounds
+  car.x = Math.max(20, Math.min(width-20, car.x));
+  car.y = Math.max(20, Math.min(height-20, car.y));
+
+  // Lap detection (Crossing finish line at x around center, y from 360 to 440 scaled)
+  let fx = 400 * scaleX, fy1 = 360 * scaleY, fy2 = 440 * scaleY;
+  if (car.x >= fx - 15 && car.x <= fx + 15 && car.y >= fy1 && car.y <= fy2 && car.speed > 1) {
+    let now = performance.now();
+    if (now - lapStartTime > 3000) { // Cooldown to prevent multi-trigger
+      let lapTime = (now - lapStartTime) / 1000;
+      lastLapTimes.push(lapTime);
+      
+      if (!bestLapTime || lapTime < bestLapTime) {
+        bestLapTime = lapTime;
+        localStorage.setItem("retroBestLap", bestLapTime);
+        $("bestLap").textContent = bestLapTime.toFixed(2) + "s";
+      }
+
+      lapStartTime = now;
+      currentLap++;
+
+      if (currentLap > 3) {
+        // Finish Race
+        running = false;
+        let totalRaceTime = lastLapTimes.reduce((a,b)=>a+b, 0);
+        if (!bestRaceTime || totalRaceTime < bestRaceTime) {
+          bestRaceTime = totalRaceTime;
+          localStorage.setItem("retroBestRace", bestRaceTime);
+          $("bestRace").textContent = bestRaceTime.toFixed(2) + "s";
+        }
+
+        $("overlay").classList.remove("hidden");
+        $("title").textContent = "ФИНИШ!";
+        $("message").innerHTML = `Гонка завершена!<br>Итоговое время: <b>${totalRaceTime.toFixed(2)}с</b><br>Лучший круг: ${bestLapTime.toFixed(2)}с`;
+        $("startBtn").textContent = "ИГРАТЬ СНОВА";
+      }
+    }
+  }
+
+  // HUD Update
+  currentLapTime = (performance.now() - lapStartTime) / 1000;
+  $("hudSpeed").textContent = Math.round(car.speed * 25);
+  $("hudLap").textContent = Math.min(3, currentLap) + "/3";
+  $("hudTime").textContent = currentLapTime.toFixed(2);
+  $("hudBest").textContent = bestLapTime ? bestLapTime.toFixed(2) : "--.--";
+}
+
+function draw() {
+  cctx.clearRect(0, 0, width, height);
+
+  // Draw Car
+  cctx.save();
+  cctx.translate(car.x, car.y);
+  cctx.rotate(car.angle);
+
+  // Body shadow & shape
+  cctx.fillStyle = "#ffcc00";
+  cctx.fillRect(-16, -10, 32, 20);
+  cctx.fillStyle = "#e52225"; // stripe
+  cctx.fillRect(-8, -10, 16, 20);
+  
+  // Wheels
+  cctx.fillStyle = "#111";
+  cctx.fillRect(-12, -14, 8, 4);
+  cctx.fillRect(4, -14, 8, 4);
+  cctx.fillRect(-12, 10, 8, 4);
+  cctx.fillRect(4, 10, 8, 4);
+
+  // Windshield
+  cctx.fillStyle = "#20eaff";
+  cctx.fillRect(2, -7, 6, 14);
+
+  cctx.restore();
+}
+
+let lastTime = 0;
+function loop(timestamp) {
+  if (!lastTime) lastTime = timestamp;
+  let dt = Math.min((timestamp - lastTime) / 1000, 0.033);
+  lastTime = timestamp;
+
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+resize();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
